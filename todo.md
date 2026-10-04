@@ -7,7 +7,6 @@ what goes in is decided case by case, by what it costs.
 And the other way round: maybe some functionality will be removed again, to make the compiler and the programs smaller. But who knows :)
 
 ## Language
-- nested procedures and functions
 - `with`
 - `goto` and `label`
 - enumerated types
@@ -65,6 +64,11 @@ And the other way round: maybe some functionality will be removed again, to make
 
 ## Compiler
 - compare the header of a `forward` definition with its declaration
+- nested routines: assign the result of an enclosing function
+- nested routines: a variable of an enclosing routine as the control variable of a `for` loop
+- nested routines: a real or pointer variable of an enclosing routine as a `var` argument
+- nested routines: test `forward` declarations inside a routine
+- nested routines: more than 4 levels
 - refuse a string constant as a `var` parameter
 - loops nested more than 8 deep
 - a bigger symbol table on the C128

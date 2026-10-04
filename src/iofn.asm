@@ -71,7 +71,9 @@ read_target:
 !:  jsr lookup
     bcs !+
     jmp err_undef
-!:  ldy #17
+!:  jsr is_outer                // a variable of a routine around the current one (nested routines): read through its address,
+    bcs rd_struct               // like an array element
+    ldy #17
     lda (sptr),y
     cmp #T_ARRAY
     bcs rd_struct
@@ -160,10 +162,13 @@ parse_intvar:
 !:  jsr lookup
     bcs !+
     jmp err_undef
-!:  ldy #17
+!:  jsr is_outer                // a variable of a routine around the current one (nested routines): its address by gen_desig
+    bcs piv_dsg
+    ldy #17
     lda (sptr),y
     cmp #T_ARRAY
     bcc piv_plain
+piv_dsg:
     jsr gen_desig
     lda etype
     cmp #T_INT

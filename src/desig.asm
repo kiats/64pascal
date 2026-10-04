@@ -19,6 +19,96 @@
 //     <index expression>       in ac
 //     jsr rt_aidx1/2/n lo...   ac = base + (index - lo) * element size   (pops the base)
 
+// ---- variables of the routines around the current one (nested routines) ------------------------------------------
+// WCELL: value of 'edesc' that gen_outer_base leaves for a boolean, char or byte LOCAL of an enclosing routine. The cell in the
+// frame is 16 bits wide (the routine itself loads and stores it with rt_ldl / rt_stl), so code that reaches it through its
+// address (gen_ldp / gen_stp) must load and store 16 bits as well; for these types the descriptor index is not used otherwise.
+.const WCELL = $ff
+// is_outer: sptr = record of a variable. Carry set if it is a local, a value parameter or a var parameter of a routine OTHER than
+// the one being compiled, i.e. one of the routines that contain it (its record byte 31 = the depth of the routine it belongs to,
+// 'inproc' = the depth of the current routine). Globals and the variables of the current routine give carry clear.
+is_outer:
+    ldy #16
+    lda (sptr),y
+    cmp #K_LOCAL
+    beq io_chk
+    cmp #K_VARPARAM
+    beq io_chk
+    cmp #K_CPARAM
+    bne io_no
+io_chk:
+    ldy #31
+    lda (sptr),y
+    cmp inproc
+    beq io_no
+    sec
+    rts
+io_no:
+    clc
+    rts
+
+// gen_outer_base: sptr = record of an outer variable (is_outer), tmpc1 = its offset. Emit the code that leaves in ac the address
+// of the variable, like the base address code at the start of gen_desig does for the variables of the current routine:
+//   1. the frame pointer of the routine the variable belongs to (gen_frame)
+//   2. the address of the variable's cell in that frame: for a local fp + offset; for a PARAMETER the offset is still relative
+//      to the argument area (the routine's declarations are not complete, its fp-relative offsets are not known yet), so go
+//      through the slot where the routine keeps the address of its argument area (pbs_tab): [fp + slot] + offset
+//   3. a var parameter (or a read-only structured parameter) holds the address of the variable in its cell: load it
+gen_outer_base:
+    ldy #31
+    lda (sptr),y
+    sta go_lv                   // depth of the routine the variable belongs to
+    ldy #21
+    lda (sptr),y
+    sta go_par                  // 1 = parameter
+    ldy #16
+    lda (sptr),y
+    sta go_kind
+    lda tmpc1
+    sta go_off
+    lda go_lv
+    jsr gen_frame               // ac = frame pointer of that routine
+    lda go_par
+    beq go_cell                 // a local: the offset is already relative to fp
+    ldx go_lv                   // a parameter: ac = [ac + slot] = address of the argument area
+    lda pbs_tab,x
+    sec
+    sbc #1
+    sta go_t
+    :GCALL(rt_addi)
+    lda go_t
+    ldx #0
+    jsr emit_word
+    :GCALL(rt_ldpw)
+go_cell:
+    :GCALL(rt_addi)             // + the offset: ac = address of the variable's cell
+    lda go_off
+    ldx #0
+    jsr emit_word
+    lda go_kind
+    cmp #K_LOCAL
+    beq go_local
+    :GCALL(rt_ldpw)             // var parameter: the cell holds the address of the variable
+    rts
+go_local:
+    lda etype                   // a boolean / char / byte cell is 16 bits wide: mark the address (see WCELL)
+    cmp #T_BOOL
+    beq go_w
+    cmp #T_CHAR
+    beq go_w
+    cmp #T_BYTE
+    bne go_done
+go_w:
+    lda #WCELL
+    sta edesc
+go_done:
+    rts
+go_lv:   .byte 0
+go_par:  .byte 0
+go_kind: .byte 0
+go_off:  .byte 0
+go_t:    .byte 0
+
 // gen_desig: sptr = record of the variable, the current token is its name. Consumes the name
 // and any index list. On return ac holds (at run time) the address; etype/edesc = its type.
 gen_desig:
@@ -34,6 +124,11 @@ gen_desig:
     iny
     lda (sptr),y
     sta tmpc1+1
+    jsr is_outer                // a variable of a routine around the current one (nested routines): see gen_outer_base
+    bcc gd_normal
+    jsr gen_outer_base
+    jmp gd_idx
+gd_normal:
     ldy #16
     lda (sptr),y
     cmp #K_VAR                  // global: the address is a constant
@@ -228,7 +323,10 @@ gen_ldp:
 gl_w:
     :GCALL(rt_ldpw)
     rts
-!:  :GCALL(rt_ldpb)
+!:  lda edesc                   // a boolean / char / byte in a 16 bit frame cell of an enclosing routine (WCELL, see
+    cmp #WCELL                  // gen_outer_base): load the whole cell
+    beq gl_w
+    :GCALL(rt_ldpb)
     rts
 
 // gen_stp: emit the store of ac through the element address on the software stack, for a
@@ -246,5 +344,8 @@ gen_stp:
 gs_w:
     :GCALL(rt_stpw)
     rts
-!:  :GCALL(rt_stpb)
+!:  lda edesc                   // a 16 bit frame cell (WCELL): store the whole cell, so that its high byte is never stale
+    cmp #WCELL
+    beq gs_w
+    :GCALL(rt_stpb)
     rts

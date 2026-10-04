@@ -180,6 +180,9 @@ st_for:
 !:  jsr lookup
     bcs !+
     jmp err_undef
+!:  jsr is_outer                // the control variable of a for loop cannot belong to a routine around this one
+    bcc !+
+    jmp err_type
 !:  ldy #16
     lda (sptr),y
     cmp #K_VAR                  // must be a global (16 or 8 bit) or a local variable
@@ -469,7 +472,11 @@ sc_done:
 // ---- statements that start with an identifier ------------------------------------------------------------
 st_ident:
     jsr lookup_must             // (reports "undefined identifier" itself)
-!:  ldy #17                     // array or string variable: the statement is an element or
+!:  jsr is_outer                // a variable of a routine around the current one (nested routines): assigned through its address,
+    bcc st_notouter             // like an array element (gen_outer_base builds the address)
+    jmp st_desig
+st_notouter:
+    ldy #17                     // array or string variable: the statement is an element or
     lda (sptr),y                // whole-structure assignment
     cmp #T_ARRAY
     bcc !+
@@ -534,6 +541,8 @@ st_desig:
     jsr typeok                  // scalar element
     lda tmpc2
     sta etype
+    lda tmpc2+1                 // (the descriptor of the target again: gen_stp looks at it, see WCELL)
+    sta edesc
     jmp gen_stp                 // store through the address (word or byte)
 sd_struct:
     cmp #T_STRING

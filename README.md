@@ -38,7 +38,8 @@ The compiler is a single pass compiler that writes machine code directly. It und
 - `program`, `uses` (the Crt unit is built in), `const`, `type`, `var`, `absolute` variables
 - `integer` (16 bit), `byte`, `char`, `boolean`, `real` (software floating point, about 7 digits)
 - arrays (any ordinal index range, several dimensions), strings (`string`, `string[n]`), records, pointers (`New`, `Dispose`)
-- procedures and functions with value and `var` parameters, locals and recursion; `forward` declarations
+- procedures and functions with value and `var` parameters, locals and recursion; `forward` declarations; nested procedures
+  and functions (up to 4 levels deep, they can use the variables of the routines around them)
 - `if`, `while`, `repeat`, `for`, `case` (with ranges and `else`), `Exit`, `Break`, `Continue`, `Halt`
 - `Inc`, `Dec`, `Odd`, `Succ`, `Pred`, `shl`, `shr`, string constants
 - `write` / `writeln` with `:width` and `:width:decimals`, `read` / `readln`, `Str`, `Val`, `Random`
@@ -47,7 +48,7 @@ The compiler is a single pass compiler that writes machine code directly. It und
 - Crt: `ClrScr`, `GotoXY`, `TextColor`, `TextBackground`, `ReadKey`, `KeyPressed`, `Delay`, ...
 - conditional compilation: `{$IFDEF C64}`, `{$IFDEF C128}`, `{$IFDEF PLUS4}`, `{$DEFINE x}`, ...
 
-Not there yet (see `todo.md`): nested procedures, `with`, sets, enumerated and subrange types, units, files.
+Not there yet (see `todo.md`): `with`, sets, enumerated and subrange types, units, files.
 
 ```pascal
 program hello;

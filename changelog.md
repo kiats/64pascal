@@ -2,6 +2,18 @@
 
 The version number is in `src/version.txt`.
 
+## 0.0.2 - in progress
+
+### Language
+- nested procedures and functions, up to 4 levels deep: a nested routine can use the variables, the parameters and the `var` parameters of the routines around it, also when they call themselves
+
+### Changes
+- every routine now starts with a 3 byte jump over its nested routines
+- the compiler is a little bigger: the Plus/4 in-place run area of the IDE is now `$5300`-`$6400`, and the table block of the Plus/4 test harness moved up by 256 bytes
+
+### Tests
+- `tests/nested.pas`, `tests/nested2.pas` (real and var parameters, Inc/Dec, calls two levels up, pointers and strings, a nested forward declaration, Exit / Break / Continue inside nested routines)
+
 ## 0.0.1 - 2026-10-03
 
 Initial release.

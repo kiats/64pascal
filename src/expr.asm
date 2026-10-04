@@ -192,10 +192,13 @@ f_ident:
     sta edesc
     jmp nexttok
 fi_notstr:
+    jsr is_outer                // a variable of a routine around the current one (nested routines): its frame is reached
+    bcs fi_dsg                  // through the static link, so it is handled like an array: by its address (gen_outer_base)
     ldy #17                     // array or string variable? (type code >= T_ARRAY)
     lda (sptr),y
     cmp #T_ARRAY
     bcc fi_scalar
+fi_dsg:
     jsr gen_desig               // ac = address of the variable or of the indexed element
     lda etype
     cmp #T_ARRAY

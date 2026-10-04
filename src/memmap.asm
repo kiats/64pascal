@@ -35,7 +35,7 @@
 .const SYM_LIMIT  = $fa00
 .const DTAB_BASE  = $fa00   // type descriptors (512 bytes)
 .const DEFTAB_BASE = $fc00  // table of {$DEFINE} symbols (256 bytes)
-.const CODE_BASE  = $5200   // generated code of a program that is run in place (behind the program's own code)
+.const CODE_BASE  = $5300   // generated code of a program that is run in place (behind the program's own code)
 .const CODE_LIMIT = $6400
 #else
 #if EDONLY
@@ -43,13 +43,13 @@
 #else
 .const SRC_LIMIT  = $4900
 #endif
-.const DTAB_BASE  = $4c00   // type descriptors (512 bytes)
-#if !EDONLY
-.const DEFTAB_BASE = $4e00  // table of {$DEFINE} symbols (256 bytes)
+.const DTAB_BASE  = $4d00   // type descriptors (512 bytes)  (the whole block of tables was moved up by 256 bytes when the
+#if !EDONLY                 // compiler grew with the nested procedures: the harness has to end below DTAB_BASE)
+.const DEFTAB_BASE = $4f00  // table of {$DEFINE} symbols (256 bytes)
 #endif
-.const SYM_BASE   = $4f00   // compiler symbol table
-.const SYM_LIMIT  = $5700
-.const CODE_BASE  = $5700   // generated code (and the build buffer for standalone files)
+.const SYM_BASE   = $5000   // compiler symbol table
+.const SYM_LIMIT  = $5800
+.const CODE_BASE  = $5800   // generated code (and the build buffer for standalone files)
 .const CODE_LIMIT = $6400
 #endif
 .const DATA_BASE  = $6400   // program globals

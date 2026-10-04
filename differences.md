@@ -14,7 +14,7 @@ shrinks, because the buffer starts right behind the program).
 | Source text, `64ide` | about 10.7 KB | about 6.7 KB | about 17.5 KB |
 | Source buffer, `64pascal` | about 13.5 KB | about 6.7 KB | about 26.5 KB |
 | Text, `64edit` (no compiler) | about 46 KB | about 37 KB | about 24 KB |
-| Program run from the editor | in memory behind the text, up to `$8000` | in memory behind the text, up to `$8400` | in low RAM `$5200`-`$6400`, about 4.5 KB, only programs without real / pointers / `:w` (others: compile to disk) |
+| Program run from the editor | in memory behind the text, up to `$8000` | in memory behind the text, up to `$8400` | in low RAM `$5300`-`$6400`, about 4.2 KB, only programs without real / pointers / `:w` (others: compile to disk) |
 | "Run now" in `64pascal` | compiles again and runs in memory | same | starts the compiled file image (copied to `$1001`), any program |
 | Standalone `.prg` output | yes | yes | yes, built in the high RAM; the image must stay below `$4c00` (about 15 KB) when it uses real / pointers / `:w`, else below `$6400` |
 | Program globals (and heap) | 4 KB | 2 KB | 1 KB |
@@ -26,6 +26,7 @@ shrinks, because the buffer starts right behind the program).
 | `write(x:w)` and `Str(x:w:d)` | yes | yes | yes (as above) |
 | Crt unit, strings, records, arrays, `case` | yes | yes | yes |
 | `Exit`, `Break`, `Continue`, `Halt`, `Inc`, `Dec`, `Odd`, `Succ`, `Pred`, `shl`, `shr`, `forward`, string constants | yes | yes | yes |
+| Nested procedures and functions (up to 4 levels) | yes | yes | yes |
 | Command keys | F2 / F3 / F4 / F5 / F6 | F2 / F3 / F4 / F5 / F6 | CTRL+S / L / R / C (ESC + letter also works) |
 | Screen | 40 columns | needs the 40-column screen | 40 columns, screen at `$0C00` |
 

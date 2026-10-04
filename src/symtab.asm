@@ -15,6 +15,11 @@
 //    20       variable/type: descriptor index (arrays, strings)    routine: parameter count
 //    21       routine: bit mask of var parameters
 //    22..29   routine: type code of each parameter (scalar type, or $80 + descriptor index)
+//    21       (also) variable record that is a PARAMETER: 1 (its offset is relative to the argument area while the
+//             declarations of its routine are compiled, see proc.asm)
+//    30       routine: 1 = declared 'forward' and not defined yet
+//    31       nesting level of the scope the name was declared in (0 = global; a routine's own record has the level of the
+//             scope it is declared in, its parameters and locals the level of its body)
 // Lookup is a linear search; this is fast enough for programs that fit in memory.
 
 // lookup: search idbuf in the whole table, newest record first, so that a local name hides a
@@ -109,6 +114,9 @@ addsym_raw:                     // add without the duplicate check (record field
     iny
     cpy #SYM_SIZE
     bcc !-
+    ldy #31                     // the nesting level of the scope the name is declared in (0 = global, 1 = inside a routine
+    lda inproc                  // declared at the top level, ...): needed to reach the variables of an enclosing routine
+    sta (symp),y
     clc                         // symp += SYM_SIZE
     lda symp
     adc #SYM_SIZE

@@ -22,8 +22,21 @@
 //   is a var parameter, 22..29 type code of each parameter (a scalar type, or $80 + the
 //   descriptor index for arrays/strings). Arrays and strings are always passed by address;
 //   a value parameter of such a type is read-only (kind K_CPARAM).
-// Routines cannot be nested. Locals and parameters are discarded from the symbol table at the
-// end of the routine (symp is reset to 'scopebase').
+// Locals and parameters are discarded from the symbol table at the end of the routine (symp is reset to 'scopebase').
+//
+// NESTED routines (up to 4 levels): a routine can declare procedures and functions inside its own declaration section. 'inproc'
+// is the nesting depth of the routine being compiled (0 = main program), every symbol record keeps the depth of its scope in
+// byte 31. The pieces that make it work:
+//   - do_proc saves the compile-time state of the enclosing routine on the hardware stack and restores it at the end of the
+//     nested routine (scope, record, locals, parameters, argument bytes, kind, Exit chain);
+//   - a routine's code starts with a "jmp" over the code of its nested routines (they are compiled in front of its body);
+//   - STATIC LINK: a routine that is declared inside another one is called with a hidden first argument, the frame pointer of the
+//     routine that contains it (gen_static_link / gen_frame); its epilogue drops it with the other arguments;
+//   - the variables of the routines around are reached from the static link: gen_outer_base (desig.asm) builds their address and
+//     the callers treat them like array elements (by address); is_outer tells which variables those are;
+//   - the offsets of the PARAMETERS of a routine are only known when its declarations are complete, which is after its nested
+//     routines were compiled. So a routine that contains nested routines gets a slot in its frame (pbs_tab) in which its prologue
+//     stores the address of its argument area; nested code finds the parameters (and the static link) of that frame through it.
 //
 // Forward declarations:  procedure p(a: integer); forward;  ...  procedure p(a: integer); begin ... end;
 // The first header enters the routine and sets byte 30 of its symbol record (the record is no longer a plain routine: its
@@ -36,6 +49,10 @@
 
 // ---- helpers ------------------------------------------------------------------------------------
 bitmask: .byte 1, 2, 4, 8, 16, 32, 64, 128
+slofs_tab: .fill 5, 0           // per nesting depth (index 2..4): frame offset of the static link of the routine being compiled
+pbs_tab:   .fill 5, 0           // per nesting depth: frame offset + 1 of the slot that holds the address of the routine's argument
+                                // area (0 = none: only a routine that contains nested routines has one, see do_proc)
+argb_tab:  .fill 5, 0           // per nesting depth: bytes of parameters of the routine (without the static link)
 
 // paramptr: tmpc3 = address of the symbol record of parameter X (X is preserved).
 // Parameters are the first records of a routine's scope.
@@ -159,9 +176,45 @@ cp_ptr:
 // ---- declaration -------------------------------------------------------------------------------
 do_proc:
     lda inproc
-    beq !+
-    jmp err_syntax   // routines cannot be nested
-!:  lda #0
+    cmp #4                      // routines can be nested up to 4 levels deep
+    bcc !+
+    jmp err_syntax
+!:  lda inproc                  // inside a routine already: keep what the enclosing routine still needs after this one
+    beq dp_save_done            // (its scope, record, locals, parameters, argument bytes, kind and Exit chain)
+    ldx inproc                  // The enclosing routine needs a slot in its frame for the address of its argument area, because
+    lda pbs_tab,x               // the routines nested in it reach its parameters through it (their offsets from fp are only
+    bne dp_has_slot             // known when the enclosing routine's declarations are complete; the slot's own offset is known
+    lda locoff                  // now). Done before the state is saved, so that the larger locoff is what gets restored.
+    clc
+    adc #1
+    sta pbs_tab,x               // (offset + 1)
+    lda locoff
+    clc
+    adc #2
+    sta locoff                  // the slot takes 2 bytes of the locals
+dp_has_slot:
+    lda scopebase
+    pha
+    lda scopebase+1
+    pha
+    lda curproc
+    pha
+    lda curproc+1
+    pha
+    lda locoff
+    pha
+    lda pcount
+    pha
+    lda argbytes
+    pha
+    lda isfunc
+    pha
+    lda exithead
+    pha
+    lda exithead+1
+    pha
+dp_save_done:
+    lda #0
     sta isfunc
     lda tok
     cmp #TK_FUNCTION
@@ -253,8 +306,10 @@ dp_have:
     sta scopebase
     lda symp+1
     sta scopebase+1
-    lda #1
-    sta inproc
+    inc inproc                  // nesting depth of the routine being compiled: 1 = declared at the top level, 2 = inside that, ...
+    ldx inproc
+    lda #0
+    sta pbs_tab,x               // no slot for the argument area address yet
     lda #0
     sta locoff
     sta pcount
@@ -314,6 +369,9 @@ dp_set:
     cpx pcount
     bcs dp_setdone
     jsr paramptr
+    ldy #21                     // mark the record as a PARAMETER (byte 21 = 1): until the declarations of the routine are
+    lda #1                      // complete its offset is relative to the argument area and not yet to fp, which routines
+    sta (tmpc3),y               // nested in it have to know (see gen_outer_base)
     ldy #17                     // type of the parameter
     lda curtype
     sta (tmpc3),y
@@ -381,6 +439,9 @@ dp_sz2:
     sta argbytes
     jmp dp_off
 dp_offdone:
+    ldx inproc                  // (argbytes = bytes of parameters is final now)
+    lda argbytes
+    sta argb_tab,x
     lda isfunc
     beq dp_semi
     lda #TK_COLON               // function result type
@@ -444,7 +505,11 @@ dp_semi:
     sta (tmpc3),y
     jmp dp_scope_end
 dp_body:
-    jsr decls                   // local const / var sections
+    lda #$4c                    // jmp over the code of the routines nested inside this one (they are compiled in the
+    jsr emit                    // declaration section, in front of this routine's own code); patched after the section
+    :JPLACE()
+    jsr decls                   // local const / var sections, nested procedures and functions
+    :PATCH()
     lda tok
     cmp #TK_BEGIN
     beq !+
@@ -466,9 +531,33 @@ dp_fix:
     inx
     jmp dp_fix
 dp_fixed:
+    lda inproc                  // a routine nested inside another one is called with a hidden first argument, the static link
+    cmp #2                      // (the frame pointer of the routine that contains it, see gen_static_link): it lies above all
+    bcc dp_nolink               // parameters, so its offset is locals + saved fp (2) + return address (2) + parameters
+    clc
+    lda tmpc2                   // (tmpc2 = locals + 4)
+    adc argbytes
+    ldx inproc
+    sta slofs_tab,x             // slofs_tab[depth] = frame offset of the static link of the routine being compiled
+dp_nolink:
     :GCALL(rt_enter)            // prologue: reserve the locals
     lda locoff
     jsr emit
+    ldx inproc                  // a routine with nested routines: the address of its argument area (fp + locals + 4) goes
+    lda pbs_tab,x               // into the slot that was reserved for it
+    beq dp_nopb
+    :GCALL(rt_lea)
+    lda locoff
+    clc
+    adc #4
+    jsr emit
+    :GCALL(rt_stl)
+    ldx inproc
+    lda pbs_tab,x
+    sec
+    sbc #1
+    jsr emit
+dp_nopb:
     jsr stmt                    // the body
     ldx #4                      // Exit jumps here
     jsr res_here
@@ -490,7 +579,13 @@ dp_noret:
     :GCALL(rt_leave)            // epilogue: drop frame and arguments, return
     lda locoff
     jsr emit
-    lda argbytes                // bytes of arguments
+    lda argbytes                // bytes of arguments; a routine nested in another one was also given the static link (2 bytes)
+    ldx inproc
+    cpx #2
+    bcc dp_noslink
+    clc
+    adc #2
+dp_noslink:
     jsr emit
     lda #TK_SEMI
     jsr expect
@@ -499,15 +594,106 @@ dp_scope_end:
     sta symp
     lda scopebase+1
     sta symp+1
+    dec inproc                  // one level out
+    beq dp_toplevel
+    pla                         // a routine declared inside another one: the state of the enclosing routine (saved in do_proc)
+    sta exithead+1
+    pla
+    sta exithead
+    pla
+    sta isfunc
+    pla
+    sta argbytes
+    pla
+    sta pcount
+    pla
+    sta locoff
+    pla
+    sta curproc+1
+    pla
+    sta curproc
+    pla
+    sta scopebase+1
+    pla
+    sta scopebase
+    jmp decls
+dp_toplevel:                    // back in the main program
     lda #<SYM_BASE
     sta scopebase
     lda #>SYM_BASE
     sta scopebase+1
     lda #0
-    sta inproc
     sta curproc
     sta curproc+1
     jmp decls
+
+// ---- static links ----------------------------------------------------------------------------------
+// A routine that is declared inside another routine (record byte 31 = the nesting depth of that routine, 1 or more; 0 = declared
+// at the top level) gets a hidden first argument: the frame pointer of the routine that contains it (its "static link"). It is
+// pushed before all other arguments, so it lies above them in the frame, at (address of the argument area) + argb_tab[depth].
+// The callee finds it there through its slofs_tab entry; code in a nested routine reaches the variables of the routines around
+// it by starting from the static link (gen_frame).
+
+// gen_frame: emit code that leaves in ac the frame pointer of the routine at nesting depth A (1 .. inproc), the current routine
+// being at depth inproc. The way up: the current routine's own static link (a normal load at slofs_tab[inproc]), then for
+// every further level the static link of the frame that is in ac, which lies behind that frame's argument area address.
+gen_frame:
+    sta gf_lv
+    cmp inproc
+    bne gf_up
+    :GCALL(rt_lea)              // the current routine: its own frame pointer (fp + 0)
+    lda #0
+    jmp emit
+gf_up:
+    ldx inproc
+    lda slofs_tab,x
+    sta gf_t
+    :GCALL(rt_ldl)              // ac = the static link of the current routine = frame pointer of depth inproc - 1
+    lda gf_t
+    jsr emit
+    ldx inproc
+    dex
+    stx gf_k                    // gf_k = depth of the frame that is in ac now
+gf_walk:
+    lda gf_k
+    cmp gf_lv
+    beq gf_done                 // that is the frame we want
+    ldx gf_k                    // one level up: ac = [[ac + slot of the argument area address] + parameter bytes]
+    lda pbs_tab,x
+    sec
+    sbc #1
+    sta gf_t
+    :GCALL(rt_addi)             // address of the frame's slot ...
+    lda gf_t
+    ldx #0
+    jsr emit_word
+    :GCALL(rt_ldpw)             // ... its content: the address of the frame's argument area
+    ldx gf_k
+    lda argb_tab,x
+    sta gf_t
+    :GCALL(rt_addi)             // the static link lies behind the parameters
+    lda gf_t
+    ldx #0
+    jsr emit_word
+    :GCALL(rt_ldpw)             // ac = the static link = frame pointer one level further out
+    dec gf_k
+    jmp gf_walk
+gf_done:
+    rts
+gf_lv: .byte 0                  // depth of the wanted frame
+gf_k:  .byte 0                  // depth of the frame that is in ac
+gf_t:  .byte 0                  // temporary: an offset to emit
+
+// gen_static_link: sptr = record of the routine that is going to be called. If it is nested in another routine, emit the code
+// that pushes its static link: the frame pointer of the routine at depth (record byte 31), found from the current frame.
+gen_static_link:
+    ldy #31
+    lda (sptr),y
+    beq gsl_none                // declared at the top level: no static link
+    jsr gen_frame               // (A = depth of the routine that contains the callee)
+    jmp gc_push                 // the first argument
+gsl_none:
+    rts
 
 // ---- calls ---------------------------------------------------------------------------------------
 // gen_call: compile a call of the routine whose record is at 'sptr'. The current token is the
@@ -523,6 +709,7 @@ dp_scope_end:
 }
 
 gen_call:
+    jsr gen_static_link         // a routine nested in another one is called with the static link as its first argument
     lda sptr+1
     pha
     lda sptr
@@ -581,10 +768,13 @@ gc_var:                         // var parameter: the argument must be a variabl
 !:  jsr lookup
     bcs !+
     jmp err_undef
-!:  ldy #17
+!:  jsr is_outer                // a variable of a routine around the current one (nested routines): its address is built
+    bcs gv_dsg                  // by gen_desig (gen_outer_base), whatever its type
+    ldy #17
     lda (sptr),y
     cmp #T_ARRAY
     bcc gv_scalar
+gv_dsg:
     jsr gen_desig               // array/string variable or element: its address is in ac
     lda etype
     cmp #T_ARRAY
